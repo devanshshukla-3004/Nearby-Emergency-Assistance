@@ -217,59 +217,30 @@ async function loadNearbyPlaces() {
   $("#refreshBtn").disabled = true;
 
   try {
-    const query = buildOverpassQuery(state.location.lat, state.location.lon);
-    let payload = null;
-    const failures = [];
-
-    for (const endpoint of CONFIG.overpassEndpoints) {
-      if (controller.signal.aborted || requestId !== state.requestId) return;
-      const endpointController = new AbortController();
-      const abortFromParent = () => endpointController.abort();
-      controller.signal.addEventListener("abort", abortFromParent, { once: true });
-      const timeoutId = window.setTimeout(() => endpointController.abort(), 18000);
-
-      try {
-        const url = `${endpoint}?data=${encodeURIComponent(query)}`;
-        const response = await fetch(url, {
-          method: "GET",
-          headers: { Accept: "application/json" },
-          signal: endpointController.signal,
-          mode: "cors",
-          cache: "no-store"
-        });
-
-        if (!response.ok) {
-          failures.push(`HTTP ${response.status}`);
-          continue;
-        }
-
-        const data = await response.json();
-        if (!data || !Array.isArray(data.elements)) {
-          failures.push("Invalid map response");
-          continue;
-        }
-
-        payload = data;
-        break;
-      } catch (error) {
-        if (controller.signal.aborted || requestId !== state.requestId) return;
-        failures.push(error?.name === "AbortError" ? "Request timed out" : "Network/CORS request failed");
-      } finally {
-        window.clearTimeout(timeoutId);
-        controller.signal.removeEventListener("abort", abortFromParent);
-      }
+    const params = new URLSearchParams({
+      lat: String(state.location.lat),
+      lon: String(state.location.lon)
+    });
+    const timeoutId = window.setTimeout(() => controller.abort(), 12000);
+    let response;
+    try {
+      response = await fetch(`/api/nearby?${params.toString()}`, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        signal: controller.signal,
+        cache: "no-store"
+      });
+    } finally {
+      window.clearTimeout(timeoutId);
     }
 
     if (controller.signal.aborted || requestId !== state.requestId) return;
-    if (!payload) {
-      const hadTimeout = failures.includes("Request timed out");
-      const hadNetworkFailure = failures.includes("Network/CORS request failed");
-      const reason = hadTimeout
-        ? "Nearby map servers took too long to respond."
-        : hadNetworkFailure
-          ? "Your browser could not connect to the public map servers."
-          : "Nearby map servers are temporarily unavailable.";
-      throw new Error(`${reason} Please retry in a moment.`);
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.error || `Nearby services request failed (HTTP ${response.status}).`);
+    }
+    if (!Array.isArray(payload.elements)) {
+      throw new Error("The nearby services API returned an unexpected response.");
     }
 
     state.places = payload.elements
@@ -291,10 +262,10 @@ async function loadNearbyPlaces() {
   } catch (error) {
     if (requestId !== state.requestId || controller.signal.aborted) return;
     const hasCachedResults = loadCachedPlaces();
-    setStatus(
-      `${error.message || "Could not load nearby services."}${hasCachedResults ? " Showing saved results for this area." : " Check your connection and retry."}`,
-      true
-    );
+    const message = error?.name === "AbortError"
+      ? "The nearby services request timed out."
+      : (error.message || "Could not load nearby services.");
+    setStatus(`${message}${hasCachedResults ? " Showing saved results for this area." : " Check your connection and retry."}`, true);
   } finally {
     if (requestId === state.requestId) {
       state.loading = false;
