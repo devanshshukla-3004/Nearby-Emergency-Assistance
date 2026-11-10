@@ -4,8 +4,12 @@
 
 const CONFIG = {
   radius: 5000,
-  overpass: "https://overpass-api.de/api/interpreter",
+  overpassEndpoints: [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter"
+  ],
   nominatim: "https://nominatim.openstreetmap.org/search",
+  photon: "https://photon.komoot.io/api/",
   cacheKey: "nearby_places_v2",
   contactsKey: "nearby_contacts_v1",
   savedKey: "nearby_saved_v1",
@@ -27,7 +31,9 @@ const state = {
   places: [],
   filter: "all",
   search: "",
-  loading: false
+  loading: false,
+  requestId: 0,
+  abortController: null
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -99,6 +105,9 @@ function requestCurrentLocation(showMessage) {
 }
 
 function setLocation(lat, lon, label) {
+  if (state.abortController) state.abortController.abort();
+  state.requestId += 1;
+  state.loading = false;
   state.location = { lat: Number(lat), lon: Number(lon), label };
   locationLabel.textContent = label;
   updateMap();
@@ -115,21 +124,71 @@ async function onManualSearch(event) {
   const submitButton = event.submitter;
   if (submitButton) submitButton.disabled = true;
   try {
-    const url = `${CONFIG.nominatim}?q=${encodeURIComponent(query)}&format=json&limit=1`;
-    const response = await fetch(url, { headers: { "Accept": "application/json" } });
-    if (!response.ok) throw new Error("Location search service is unavailable.");
-    const data = await response.json();
-    if (!Array.isArray(data) || data.length === 0) {
+    const result = await geocodeLocation(query);
+    if (!result) {
       setStatus("No matching location found. Try a nearby city or landmark.", true);
       return;
     }
-    setLocation(Number(data[0].lat), Number(data[0].lon), data[0].display_name.split(",").slice(0, 2).join(","));
+    setLocation(result.lat, result.lon, result.label);
     $("#manualPanel").hidden = true;
     loadNearbyPlaces();
   } catch (error) {
     setStatus(error.message || "Location search failed. Please try again.", true);
   } finally {
     if (submitButton) submitButton.disabled = false;
+  }
+}
+
+async function geocodeLocation(query) {
+  const attempts = [
+    async () => {
+      const url = `${CONFIG.nominatim}?q=${encodeURIComponent(query)}&format=json&limit=1`;
+      const response = await fetchWithTimeout(url, { headers: { Accept: "application/json" } }, 10000);
+      if (!response.ok) throw new Error(`Nominatim returned HTTP ${response.status}`);
+      const data = await response.json();
+      if (!Array.isArray(data) || !data[0]) return null;
+      return {
+        lat: Number(data[0].lat),
+        lon: Number(data[0].lon),
+        label: String(data[0].display_name || query).split(",").slice(0, 2).join(",")
+      };
+    },
+    async () => {
+      const url = `${CONFIG.photon}?q=${encodeURIComponent(query)}&limit=1`;
+      const response = await fetchWithTimeout(url, { headers: { Accept: "application/json" } }, 10000);
+      if (!response.ok) throw new Error(`Photon returned HTTP ${response.status}`);
+      const data = await response.json();
+      const feature = data.features?.[0];
+      if (!feature?.geometry?.coordinates) return null;
+      const [lon, lat] = feature.geometry.coordinates;
+      const props = feature.properties || {};
+      return {
+        lat: Number(lat),
+        lon: Number(lon),
+        label: [props.name, props.city || props.town || props.village, props.state].filter(Boolean).slice(0, 2).join(", ") || query
+      };
+    }
+  ];
+  let lastError;
+  for (const attempt of attempts) {
+    try {
+      const result = await attempt();
+      if (result && Number.isFinite(result.lat) && Number.isFinite(result.lon)) return result;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  if (lastError) throw new Error("Location search services are temporarily unavailable. Please retry or use a nearby landmark.");
+  return null;
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    window.clearTimeout(timeout);
   }
 }
 
@@ -142,21 +201,57 @@ function buildOverpassQuery(lat, lon) {
 }
 
 async function loadNearbyPlaces() {
-  if (!state.location || state.loading) return;
+  if (!state.location) return;
+  if (state.abortController) state.abortController.abort();
+  const requestId = ++state.requestId;
+  const controller = new AbortController();
+  state.abortController = controller;
   state.loading = true;
   setStatus("Searching for emergency services within 5 km…");
   $("#refreshBtn").disabled = true;
+
   try {
     const query = buildOverpassQuery(state.location.lat, state.location.lon);
-    const response = await fetch(CONFIG.overpass, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
-      body: `data=${encodeURIComponent(query)}`
-    });
-    if (!response.ok) throw new Error("The map data service is temporarily unavailable.");
-    const payload = await response.json();
-    const elements = Array.isArray(payload.elements) ? payload.elements : [];
-    state.places = elements
+    let payload = null;
+    let lastError = null;
+
+    for (const endpoint of CONFIG.overpassEndpoints) {
+      if (controller.signal.aborted || requestId !== state.requestId) return;
+      try {
+        const timeout = window.setTimeout(() => controller.abort(), 25000);
+        let response;
+        try {
+          response = await fetch(endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", "Accept": "application/json" },
+            body: `data=${encodeURIComponent(query)}`,
+            signal: controller.signal,
+            referrerPolicy: "strict-origin-when-cross-origin"
+          });
+        } finally {
+          window.clearTimeout(timeout);
+        }
+        if (!response.ok) {
+          const retryHint = response.status === 429 || response.status === 503
+            ? " The public map server is busy or rate-limited."
+            : "";
+          throw new Error(`Map data server returned HTTP ${response.status}.${retryHint}`);
+        }
+        payload = await response.json();
+        if (!payload || !Array.isArray(payload.elements)) {
+          throw new Error("The map data server returned an unexpected response.");
+        }
+        break;
+      } catch (error) {
+        if (controller.signal.aborted || requestId !== state.requestId) return;
+        lastError = error;
+      }
+    }
+
+    if (!payload) throw lastError || new Error("All nearby-service data servers are unavailable.");
+    if (requestId !== state.requestId) return;
+
+    state.places = payload.elements
       .map(normalizePlace)
       .filter(Boolean)
       .map((place) => ({
@@ -173,11 +268,15 @@ async function loadNearbyPlaces() {
       ? `${state.places.length} services found near ${state.location.label}. Results are sorted by distance.`
       : "No mapped emergency services were found within 5 km. Try another area or use official emergency numbers.");
   } catch (error) {
+    if (requestId !== state.requestId) return;
     loadCachedPlaces();
-    setStatus(`${error.message || "Could not load nearby services."} ${state.places.length ? "Showing saved results." : "Please try again later."}`, true);
+    setStatus(`${error.message || "Could not load nearby services."} ${state.places.length ? "Showing saved results." : "Check your connection and try again."}`, true);
   } finally {
-    state.loading = false;
-    $("#refreshBtn").disabled = false;
+    if (requestId === state.requestId) {
+      state.loading = false;
+      state.abortController = null;
+      $("#refreshBtn").disabled = false;
+    }
   }
 }
 
@@ -396,19 +495,33 @@ function updateMap() {
 function loadCachedPlaces() {
   try {
     const cached = JSON.parse(localStorage.getItem(CONFIG.cacheKey) || "null");
-    if (cached && Array.isArray(cached.places) &&
-        Date.now() - cached.savedAt < CONFIG.cacheDuration) {
+    if (!cached || !Array.isArray(cached.places) || !cached.location ||
+        Date.now() - cached.savedAt >= CONFIG.cacheDuration) return false;
+    if (state.location) {
+      const offset = distanceKm(state.location.lat, state.location.lon, cached.location.lat, cached.location.lon);
+      if (offset > 1) return false;
+      state.places = cached.places.map((place) => ({
+        ...place,
+        distance: distanceKm(state.location.lat, state.location.lon, place.lat, place.lon)
+      })).sort((a, b) => a.distance - b.distance);
+    } else {
       state.places = cached.places;
-      renderPlaces();
-      setStatus("Showing recently saved nearby services. Refresh when you have a connection.");
     }
+    renderPlaces();
+    setStatus("Showing recently saved nearby services. Refresh when you have a connection.");
+    return true;
   } catch {
     setStatus("Saved results could not be read. Search again when online.", true);
+    return false;
   }
 }
 function savePlacesCache(places) {
   try {
-    localStorage.setItem(CONFIG.cacheKey, JSON.stringify({ places, savedAt: Date.now() }));
+    localStorage.setItem(CONFIG.cacheKey, JSON.stringify({
+      places,
+      location: state.location ? { lat: state.location.lat, lon: state.location.lon, label: state.location.label } : null,
+      savedAt: Date.now()
+    }));
   } catch { /* Storage may be unavailable or full. */ }
 }
 
