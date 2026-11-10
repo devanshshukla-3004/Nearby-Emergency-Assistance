@@ -1,74 +1,43 @@
 // Nearby emergency services API.
-// Query each OSM category independently: Photon reverse filters are applied
-// per request, then the results are merged and deduplicated.
-const PHOTON_ENDPOINT = "https://photon.komoot.io/reverse";
-
-const CATEGORIES = [
-  { id: "hospital", tag: "amenity:hospital" },
-  { id: "police", tag: "amenity:police" },
-  { id: "fire_station", tag: "amenity:fire_station" },
-  { id: "pharmacy", tag: "amenity:pharmacy" },
-  { id: "clinic", tag: "amenity:clinic" },
-  { id: "ambulance_station", tag: "emergency:ambulance_station" }
+// Server-side Overpass fallback avoids the public Photon reverse endpoint,
+// which currently responds HTTP 503 for every category in this deployment.
+const OVERPASS_ENDPOINTS = [
+  "https://overpass-api.de/api/interpreter",
+  "https://overpass.private.coffee/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter"
 ];
 
-const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+function buildQuery(lat, lon) {
+  return `[out:json][timeout:20];(
+    nwr(around:5000,${lat},${lon})["amenity"~"^(hospital|police|fire_station|pharmacy|clinic)$"];
+    nwr(around:5000,${lat},${lon})["emergency"="ambulance_station"];
+  );out center tags;`;
+}
 
-async function fetchCategory(lat, lon, category) {
-  const params = new URLSearchParams({
-    lat: String(lat),
-    lon: String(lon),
-    radius: "5",
-    limit: "50",
-    lang: "en",
-    osm_tag: category.tag
-  });
+async function queryOverpass(endpoint, query) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 3500);
-
+  const timer = setTimeout(() => controller.abort(), 12000);
   try {
-    const response = await fetch(`${PHOTON_ENDPOINT}?${params.toString()}`, {
-      headers: { Accept: "application/geo+json" },
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+        Accept: "application/json"
+      },
+      body: new URLSearchParams({ data: query }).toString(),
       signal: controller.signal
     });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
+    if (!response.ok) throw new Error(`Overpass HTTP ${response.status}`);
     const data = await response.json();
-    if (!data || !Array.isArray(data.features)) {
-      throw new Error("Invalid GeoJSON response");
-    }
-
-    return data.features.map((feature, index) => {
-      const props = feature.properties || {};
-      const [longitude, latitude] = feature.geometry?.coordinates || [];
-      const tags = {
-        ...(props.extra || {}),
-        name: props.name || props.street || props.district || "Unnamed emergency service",
-        [category.tag.split(":")[0]]: category.tag.split(":")[1]
-      };
-
-      if (props.osm_key && props.osm_value) tags[props.osm_key] = props.osm_value;
-      if (props.housenumber) tags["addr:housenumber"] = props.housenumber;
-      if (props.street) tags["addr:street"] = props.street;
-      if (props.district) tags["addr:suburb"] = props.district;
-      if (props.city) tags["addr:city"] = props.city;
-      if (props.phone) tags.phone = props.phone;
-
-      return {
-        type: props.osm_type === "W" ? "way" : props.osm_type === "R" ? "relation" : "node",
-        id: props.osm_id || `photon-${category.id}-${index}-${latitude}-${longitude}`,
-        lat: Number(latitude),
-        lon: Number(longitude),
-        tags
-      };
-    }).filter((item) => Number.isFinite(item.lat) && Number.isFinite(item.lon));
+    if (!Array.isArray(data.elements)) throw new Error("Invalid Overpass response");
+    return data.elements;
   } finally {
     clearTimeout(timer);
   }
 }
 
 module.exports = async function handler(req, res) {
-  res.setHeader("Cache-Control", "s-maxage=900, stale-while-revalidate=3600");
+  res.setHeader("Cache-Control", "s-maxage=300, stale-while-revalidate=900");
   res.setHeader("Content-Type", "application/json; charset=utf-8");
 
   if (req.method !== "GET") {
@@ -78,57 +47,42 @@ module.exports = async function handler(req, res) {
 
   const lat = Number(req.query.lat);
   const lon = Number(req.query.lon);
-  if (!Number.isFinite(lat) || !Number.isFinite(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) ||
+      lat < -90 || lat > 90 || lon < -180 || lon > 180) {
     return res.status(400).json({ error: "A valid latitude and longitude are required." });
   }
 
-  const combined = [];
-  const categoryCounts = {};
-  const categoryErrors = {};
-
-  // Use small concurrent batches to finish within serverless limits
-  // without firing all public Photon requests at once.
-  for (let start = 0; start < CATEGORIES.length; start += 3) {
-    const batch = CATEGORIES.slice(start, start + 3);
-    const results = await Promise.allSettled(
-      batch.map((category) => fetchCategory(lat, lon, category))
-    );
-    results.forEach((result, index) => {
-      const category = batch[index];
-      if (result.status === "fulfilled") {
-        categoryCounts[category.id] = result.value.length;
-        combined.push(...result.value);
-      } else {
-        categoryCounts[category.id] = 0;
-        const error = result.reason;
-        categoryErrors[category.id] = error?.name === "AbortError"
-          ? "timeout"
-          : String(error?.message || error);
-      }
+  const query = buildQuery(lat, lon);
+  const attempts = OVERPASS_ENDPOINTS.map((endpoint) => queryOverpass(endpoint, query));
+  try {
+    // First healthy mirror wins; the remaining requests are aborted by the
+    // platform when the handler completes, avoiding serial mirror delays.
+    const elements = await Promise.any(attempts);
+    const categoryCounts = {
+      hospital: 0, police: 0, fire_station: 0,
+      pharmacy: 0, clinic: 0, ambulance_station: 0
+    };
+    for (const item of elements) {
+      const tags = item.tags || {};
+      if (tags.amenity === "hospital") categoryCounts.hospital++;
+      else if (tags.amenity === "police") categoryCounts.police++;
+      else if (tags.amenity === "fire_station") categoryCounts.fire_station++;
+      else if (tags.amenity === "pharmacy") categoryCounts.pharmacy++;
+      else if (tags.amenity === "clinic") categoryCounts.clinic++;
+      else if (tags.emergency === "ambulance_station") categoryCounts.ambulance_station++;
+    }
+    return res.status(200).json({
+      elements,
+      source: "OpenStreetMap via Overpass",
+      categoryCounts
     });
-    if (start + 3 < CATEGORIES.length) await wait(150);
-  }
-
-  const unique = new Map();
-  for (const item of combined) {
-    const key = `${item.type}-${item.id}`;
-    if (!unique.has(key)) unique.set(key, item);
-  }
-
-  const elements = Array.from(unique.values());
-  if (!elements.length) {
-    console.error("All category lookups failed or returned no features", { lat, lon, categoryErrors });
+  } catch (error) {
+    console.error("All Overpass mirrors failed", {
+      lat, lon,
+      errors: (error?.errors || []).map((item) => String(item?.message || item))
+    });
     return res.status(503).json({
-      error: "No emergency service categories could be loaded. Please retry shortly.",
-      categoryCounts,
-      categoryErrors
+      error: "OpenStreetMap search services are temporarily unavailable. Please retry shortly."
     });
   }
-
-  return res.status(200).json({
-    elements,
-    source: "OpenStreetMap via Photon",
-    categoryCounts,
-    partial: Object.keys(categoryErrors).length > 0
-  });
 };
