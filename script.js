@@ -221,7 +221,7 @@ async function loadNearbyPlaces() {
       lat: String(state.location.lat),
       lon: String(state.location.lon)
     });
-    const timeoutId = window.setTimeout(() => controller.abort(), 12000);
+    const timeoutId = window.setTimeout(() => controller.abort(), 15000);
     let response;
     try {
       response = await fetch(`/api/nearby?${params.toString()}`, {
@@ -273,10 +273,11 @@ async function loadNearbyPlaces() {
       ? `${state.places.length} services found near ${state.location.label}. Results are sorted by distance.${categorySummary ? ` Category breakdown — ${categorySummary}.` : ""}`
       : `No mapped emergency services were found within 5 km. ${categorySummary ? `Category breakdown — ${categorySummary}. ` : ""}Try another area or use official emergency numbers.`);
   } catch (error) {
-    if (requestId !== state.requestId || controller.signal.aborted) return;
+    if (requestId !== state.requestId) return;
+    const wasTimedOut = controller.signal.aborted;
     const hasCachedResults = loadCachedPlaces();
-    const message = error?.name === "AbortError"
-      ? "The nearby services request timed out."
+    const message = wasTimedOut || error?.name === "AbortError"
+      ? "The nearby services request timed out. Please retry."
       : (error.message || "Could not load nearby services.");
     setStatus(`${message}${hasCachedResults ? " Showing saved results for this area." : " Check your connection and retry."}`, true);
   } finally {
