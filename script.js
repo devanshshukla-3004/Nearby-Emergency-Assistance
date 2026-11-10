@@ -499,18 +499,14 @@ function updateMap() {
 function loadCachedPlaces() {
   try {
     const cached = JSON.parse(localStorage.getItem(CONFIG.cacheKey) || "null");
-    if (!cached || !Array.isArray(cached.places) || !cached.location ||
+    if (!cached || !Array.isArray(cached.places) || !cached.location || !state.location ||
         Date.now() - cached.savedAt >= CONFIG.cacheDuration) return false;
-    if (state.location) {
-      const offset = distanceKm(state.location.lat, state.location.lon, cached.location.lat, cached.location.lon);
-      if (offset > 1) return false;
-      state.places = cached.places.map((place) => ({
-        ...place,
-        distance: distanceKm(state.location.lat, state.location.lon, place.lat, place.lon)
-      })).sort((a, b) => a.distance - b.distance);
-    } else {
-      state.places = cached.places;
-    }
+    const offset = distanceKm(state.location.lat, state.location.lon, cached.location.lat, cached.location.lon);
+    if (offset > 1) return false;
+    state.places = cached.places.map((place) => ({
+      ...place,
+      distance: distanceKm(state.location.lat, state.location.lon, place.lat, place.lon)
+    })).sort((a, b) => a.distance - b.distance);
     renderPlaces();
     setStatus("Showing recently saved nearby services. Refresh when you have a connection.");
     return true;
