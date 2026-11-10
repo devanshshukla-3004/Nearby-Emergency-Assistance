@@ -26,8 +26,8 @@ No framework, backend, database, paid API, or build tool is required.
 
 ## Features
 
-- Current location detection with manual location search fallback
-- Nearby hospital, police, fire station, pharmacy, clinic and ambulance-station lookup
+- Current location detection with manual location search fallback (Nominatim, then Photon)
+- Nearby hospital, police, fire station, pharmacy, clinic and ambulance-station lookup with sequential Overpass endpoint fallback
 - 5 km search radius and distance sorting
 - Category filters and text search
 - OpenStreetMap map and directions links
@@ -46,11 +46,11 @@ No framework, backend, database, paid API, or build tool is required.
 - In India, use the official emergency number 112 for urgent assistance. If a call cannot connect, use another official local channel.
 - Nearby service listings depend on OpenStreetMap community data. Listings, phone numbers, addresses, and operating status may be missing or outdated. Always verify critical details.
 - Location access is optional. The app uses the browser's location permission and stores preferences/results locally in the browser. It does not have a server that receives the user's location.
-- Public map/search services can be rate-limited or temporarily unavailable.
+- Public map/search services can be rate-limited or temporarily unavailable. Nearby tries a second Overpass instance if the primary instance fails, uses bounded request timeouts, and only reuses cached results when the cached location is within 1 km of the selected location. This improves resilience but cannot guarantee third-party service uptime.
 
 ## External data attribution
 
-Map and place data are provided by OpenStreetMap contributors. Search and nearby place queries use the public Nominatim and Overpass API services. Review their usage policies before any high-volume or production use.
+Map and place data are provided by OpenStreetMap contributors. Manual geocoding tries the public Nominatim service and then Photon. Nearby place queries use the public Overpass API instances. Review each provider's usage policy before any high-volume or production use; public services are best-effort and are not emergency dispatch infrastructure.
 
 ## GitHub Pages deployment
 
