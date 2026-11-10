@@ -1,8 +1,8 @@
-// Nearby emergency services API using distinct, public OpenStreetMap Overpass instances.
-// Requests are sequential and identify this application to respect provider policies.
+// Nearby emergency services API using public OpenStreetMap Overpass instances.
+// Keep requests sequential, identify this application, and fail over quickly.
 const OVERPASS_ENDPOINTS = [
-  "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
-  "https://overpass.private.coffee/api/interpreter"
+  "https://overpass.private.coffee/api/interpreter",
+  "https://overpass-api.de/api/interpreter"
 ];
 
 const APP_HEADERS = {
@@ -13,15 +13,15 @@ const APP_HEADERS = {
 };
 
 function buildQuery(lat, lon) {
-  return `[out:json][timeout:20];(
+  return `[out:json][timeout:10];(
     nwr(around:5000,${lat},${lon})["amenity"~"^(hospital|police|fire_station|pharmacy|clinic)$"];
     nwr(around:5000,${lat},${lon})["emergency"="ambulance_station"];
-  );out center tags;`;
+  );out center tags qt;`;
 }
 
 async function queryOverpass(endpoint, query) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 12000);
+  const timer = setTimeout(() => controller.abort(), 5500);
   try {
     const response = await fetch(endpoint, {
       method: "POST",
@@ -56,8 +56,6 @@ module.exports = async function handler(req, res) {
 
   const query = buildQuery(lat, lon);
   const errors = [];
-  // Do not fan out requests: public Overpass operators ask clients to query one
-  // instance at a time. The second endpoint is a genuine independent fallback.
   for (const endpoint of OVERPASS_ENDPOINTS) {
     try {
       const elements = await queryOverpass(endpoint, query);
@@ -74,11 +72,7 @@ module.exports = async function handler(req, res) {
         else if (tags.amenity === "clinic") categoryCounts.clinic++;
         else if (tags.emergency === "ambulance_station") categoryCounts.ambulance_station++;
       }
-      return res.status(200).json({
-        elements,
-        source: "OpenStreetMap via Overpass",
-        categoryCounts
-      });
+      return res.status(200).json({ elements, source: "OpenStreetMap via Overpass", categoryCounts });
     } catch (error) {
       errors.push(String(error?.message || error));
     }
