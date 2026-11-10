@@ -232,3 +232,5 @@ button:focus-visible, a:focus-visible, input:focus-visible, summary:focus-visibl
   outline-offset: 2px;
 }
 body.dark .status-message.error { background: #382522; color: #ffc0b5; border-color: #70433b; }
+
+.service-list:focus-visible { outline: 3px solid rgba(233, 106, 85, .45); outline-offset: 3px; }
