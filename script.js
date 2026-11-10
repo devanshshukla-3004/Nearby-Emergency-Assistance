@@ -256,9 +256,22 @@ async function loadNearbyPlaces() {
     savePlacesCache(state.places);
     renderPlaces();
     updateMap();
+    const categoryLabels = {
+      hospital: "Hospitals",
+      police: "Police",
+      fire_station: "Fire stations",
+      pharmacy: "Pharmacies",
+      clinic: "Clinics",
+      ambulance_station: "Ambulance stations"
+    };
+    const categorySummary = payload.categoryCounts
+      ? Object.entries(categoryLabels)
+          .map(([key, label]) => `${label}: ${payload.categoryCounts[key] ?? 0}`)
+          .join(" · ")
+      : "";
     setStatus(state.places.length
-      ? `${state.places.length} services found near ${state.location.label}. Results are sorted by distance.`
-      : "No mapped emergency services were found within 5 km. Try another area or use official emergency numbers.");
+      ? `${state.places.length} services found near ${state.location.label}. Results are sorted by distance.${categorySummary ? ` Category breakdown — ${categorySummary}.` : ""}`
+      : `No mapped emergency services were found within 5 km. ${categorySummary ? `Category breakdown — ${categorySummary}. ` : ""}Try another area or use official emergency numbers.`);
   } catch (error) {
     if (requestId !== state.requestId || controller.signal.aborted) return;
     const hasCachedResults = loadCachedPlaces();
