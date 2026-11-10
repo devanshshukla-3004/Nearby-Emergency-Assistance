@@ -4,11 +4,6 @@
 
 const CONFIG = {
   radius: 5000,
-  overpassEndpoints: [
-    "https://overpass-api.de/api/interpreter",
-    "https://overpass.private.coffee/api/interpreter",
-    "https://overpass.kumi.systems/api/interpreter"
-  ],
   nominatim: "https://nominatim.openstreetmap.org/search",
   photon: "https://photon.komoot.io/api/",
   cacheKey: "nearby_places_v2",
@@ -198,11 +193,6 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
   } finally {
     window.clearTimeout(timeout);
   }
-}
-
-function buildOverpassQuery(lat, lon) {
-  const amenityPattern = "hospital|police|fire_station|pharmacy|clinic";
-  return `[out:json][timeout:20];(nwr(around:${CONFIG.radius},${lat},${lon})["amenity"~"^(${amenityPattern})$"];nwr(around:${CONFIG.radius},${lat},${lon})["emergency"="ambulance_station"];);out center tags;`;
 }
 
 async function loadNearbyPlaces() {
