@@ -6,7 +6,8 @@ const CONFIG = {
   radius: 5000,
   overpassEndpoints: [
     "https://overpass-api.de/api/interpreter",
-    "https://overpass.private.coffee/api/interpreter"
+    "https://overpass.private.coffee/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter"
   ],
   nominatim: "https://nominatim.openstreetmap.org/search",
   photon: "https://photon.komoot.io/api/",
@@ -200,16 +201,14 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
 }
 
 function buildOverpassQuery(lat, lon) {
-  const around = (tag, value) =>
-    `node["${tag}"="${value}"](around:${CONFIG.radius},${lat},${lon});` +
-    `way["${tag}"="${value}"](around:${CONFIG.radius},${lat},${lon});` +
-    `relation["${tag}"="${value}"](around:${CONFIG.radius},${lat},${lon});`;
-  return `[out:json][timeout:25];(${around("amenity","hospital")}${around("amenity","police")}${around("amenity","fire_station")}${around("amenity","pharmacy")}${around("emergency","ambulance_station")}${around("amenity","clinic")});out center tags;`;
+  const amenityPattern = "hospital|police|fire_station|pharmacy|clinic";
+  return `[out:json][timeout:20];(nwr(around:${CONFIG.radius},${lat},${lon})["amenity"~"^(${amenityPattern})$"];nwr(around:${CONFIG.radius},${lat},${lon})["emergency"="ambulance_station"];);out center tags;`;
 }
 
 async function loadNearbyPlaces() {
   if (!state.location) return;
   if (state.abortController) state.abortController.abort();
+
   const requestId = ++state.requestId;
   const controller = new AbortController();
   state.abortController = controller;
@@ -220,47 +219,58 @@ async function loadNearbyPlaces() {
   try {
     const query = buildOverpassQuery(state.location.lat, state.location.lon);
     let payload = null;
-    let lastError = null;
+    const failures = [];
 
     for (const endpoint of CONFIG.overpassEndpoints) {
       if (controller.signal.aborted || requestId !== state.requestId) return;
+      const endpointController = new AbortController();
+      const abortFromParent = () => endpointController.abort();
+      controller.signal.addEventListener("abort", abortFromParent, { once: true });
+      const timeoutId = window.setTimeout(() => endpointController.abort(), 18000);
+
       try {
-        const endpointController = new AbortController();
-        const abortEndpoint = () => endpointController.abort();
-        controller.signal.addEventListener("abort", abortEndpoint, { once: true });
-        const timeout = window.setTimeout(() => endpointController.abort(), 25000);
-        let response;
-        try {
-          response = await fetch(endpoint, {
-            method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", "Accept": "application/json" },
-            body: `data=${encodeURIComponent(query)}`,
-            signal: endpointController.signal,
-            referrerPolicy: "strict-origin-when-cross-origin"
-          });
-        } finally {
-          window.clearTimeout(timeout);
-          controller.signal.removeEventListener("abort", abortEndpoint);
-        }
+        const url = `${endpoint}?data=${encodeURIComponent(query)}`;
+        const response = await fetch(url, {
+          method: "GET",
+          headers: { Accept: "application/json" },
+          signal: endpointController.signal,
+          mode: "cors",
+          cache: "no-store"
+        });
+
         if (!response.ok) {
-          const retryHint = response.status === 429 || response.status === 503
-            ? " The public map server is busy or rate-limited."
-            : "";
-          throw new Error(`Map data server returned HTTP ${response.status}.${retryHint}`);
+          failures.push(`HTTP ${response.status}`);
+          continue;
         }
-        payload = await response.json();
-        if (!payload || !Array.isArray(payload.elements)) {
-          throw new Error("The map data server returned an unexpected response.");
+
+        const data = await response.json();
+        if (!data || !Array.isArray(data.elements)) {
+          failures.push("Invalid map response");
+          continue;
         }
+
+        payload = data;
         break;
       } catch (error) {
         if (controller.signal.aborted || requestId !== state.requestId) return;
-        lastError = error;
+        failures.push(error?.name === "AbortError" ? "Request timed out" : "Network/CORS request failed");
+      } finally {
+        window.clearTimeout(timeoutId);
+        controller.signal.removeEventListener("abort", abortFromParent);
       }
     }
 
-    if (!payload) throw lastError || new Error("All nearby-service data servers are unavailable.");
-    if (requestId !== state.requestId) return;
+    if (controller.signal.aborted || requestId !== state.requestId) return;
+    if (!payload) {
+      const hadTimeout = failures.includes("Request timed out");
+      const hadNetworkFailure = failures.includes("Network/CORS request failed");
+      const reason = hadTimeout
+        ? "Nearby map servers took too long to respond."
+        : hadNetworkFailure
+          ? "Your browser could not connect to the public map servers."
+          : "Nearby map servers are temporarily unavailable.";
+      throw new Error(`${reason} Please retry in a moment.`);
+    }
 
     state.places = payload.elements
       .map(normalizePlace)
@@ -279,9 +289,12 @@ async function loadNearbyPlaces() {
       ? `${state.places.length} services found near ${state.location.label}. Results are sorted by distance.`
       : "No mapped emergency services were found within 5 km. Try another area or use official emergency numbers.");
   } catch (error) {
-    if (requestId !== state.requestId) return;
-    loadCachedPlaces();
-    setStatus(`${error.message || "Could not load nearby services."} ${state.places.length ? "Showing saved results." : "Check your connection and try again."}`, true);
+    if (requestId !== state.requestId || controller.signal.aborted) return;
+    const hasCachedResults = loadCachedPlaces();
+    setStatus(
+      `${error.message || "Could not load nearby services."}${hasCachedResults ? " Showing saved results for this area." : " Check your connection and retry."}`,
+      true
+    );
   } finally {
     if (requestId === state.requestId) {
       state.loading = false;
