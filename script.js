@@ -105,10 +105,17 @@ function requestCurrentLocation(showMessage) {
 }
 
 function setLocation(lat, lon, label) {
+  const nextLocation = { lat: Number(lat), lon: Number(lon), label };
+  const locationChanged = !state.location ||
+    distanceKm(state.location.lat, state.location.lon, nextLocation.lat, nextLocation.lon) > 1;
   if (state.abortController) state.abortController.abort();
   state.requestId += 1;
   state.loading = false;
-  state.location = { lat: Number(lat), lon: Number(lon), label };
+  state.location = nextLocation;
+  if (locationChanged) {
+    state.places = [];
+    renderPlaces();
+  }
   locationLabel.textContent = label;
   updateMap();
 }
