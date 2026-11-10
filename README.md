@@ -2,75 +2,76 @@
 
 **Project title:** Nearby: A Smart Location-Based Emergency Assistance Web Application
 
-A responsive, browser-based emergency assistance website that helps users locate nearby emergency facilities, view directions, save useful places, manage trusted contacts, and prepare a location-sharing message.
+A responsive, browser-based emergency assistance website that helps users find nearby emergency facilities, view directions, save useful places, manage trusted contacts, and prepare a location-sharing message.
 
 ## Technology used (mapped to CSE326 syllabus)
 
-- HTML5: semantic page structure, forms, links, accessible labels
-- CSS3: responsive design, Flexbox, Grid, variables, transitions, focus states, media queries
-- JavaScript: variables, constants, functions, arrays, objects, conditions, DOM manipulation, event handling, validation, regular expressions, error handling
+- HTML5: semantic page structure, forms, links and accessible labels
+- CSS3: responsive design, Flexbox, Grid, variables, transitions, focus states and media queries
+- JavaScript: functions, arrays, objects, conditions, DOM manipulation, event handling, validation and error handling
 - Browser Geolocation API: current location detection
-- Web Storage API / LocalStorage: saved contacts, saved places, theme preference, temporary result cache
-- Fetch API and JSON: location lookup and nearby service data
-- GitHub Pages: static website deployment
+- Web Storage API / LocalStorage: saved contacts, saved places, theme preference and temporary result cache
+- Fetch API and JSON: geocoding and nearby-service requests
+- Node.js serverless API route on Vercel: keeps the Geoapify API key on the server
+- Geoapify Places API: nearby hospital, clinic, pharmacy, police-station and fire-station data
+- OpenStreetMap: map display, directions links and map-data attribution
+- Vercel: hosting for the frontend and `/api/nearby` backend route
 
-No framework, backend, database, paid API, or build tool is required.
+## Run and deploy
 
-## Run the website
+The complete application requires Vercel hosting because nearby-place lookup is handled by the server-side `/api/nearby` route. Opening `index.html` directly or deploying only the static files to GitHub Pages will not provide the nearby search API.
 
-1. Extract the ZIP file.
-2. Open `index.html` in a modern browser.
-3. Allow location access when prompted, or use **Set location** to search for a city or area.
-4. Internet access is needed for live OpenStreetMap/Nominatim/Overpass data and the embedded map.
-5. For reliable browser geolocation, run the website from `localhost` or an HTTPS host such as GitHub Pages. Some browsers restrict geolocation on `file://` pages.
+1. Fork or clone this repository.
+2. Create a free Geoapify account at https://myprojects.geoapify.com/ and generate an API key.
+3. Import the repository into Vercel.
+4. In **Project Settings → Environment Variables**, add `GEOAPIFY_API_KEY` with the Geoapify key for Preview and Production environments.
+5. Deploy the project.
+6. Open the HTTPS deployment, allow location access or choose **Set location**, and test nearby search.
+
+The API key must remain a server-side environment variable. Do not place it in `script.js`, HTML, public environment variables, or source control.
 
 ## Features
 
 - Current location detection with manual location search fallback (Nominatim, then Photon)
-- Nearby hospital, police, fire station, pharmacy, clinic and ambulance-station lookup with sequential Overpass endpoint fallback
-- 5 km search radius and distance sorting
+- Nearby hospitals, clinics, pharmacies, police stations and fire stations through Geoapify Places API
+- 5 km search radius, distance sorting and up to 200 results
+- Scrollable results panel so a large result set does not extend the full page
 - Category filters and text search
 - OpenStreetMap map and directions links
-- Call links when a facility phone number is available in map data
+- Call links when a facility phone number is available in provider data
 - Emergency call shortcut (`tel:112`)
 - Prepare a location alert with WhatsApp and SMS links
 - Trusted contact list with phone validation
 - Saved emergency places
-- Local result cache and dark mode
-- Responsive layout, accessible labels, status messages and reduced-motion support
+- Location-aware local result cache and dark mode
+- Responsive layout, accessible labels, keyboard focus, status messages and reduced-motion support
+- Server-side request timeout, API-key protection, input validation and short-lived response caching
 
 ## Important safety and data limitations
 
 - This is an informational student project. It does **not** dispatch ambulances, police, fire services or emergency responders.
 - The SOS area provides a direct phone link and prepares a message for the user to send. It does not silently send alerts or guarantee that a contact receives them.
-- In India, use the official emergency number 112 for urgent assistance. If a call cannot connect, use another official local channel.
-- Nearby service listings depend on OpenStreetMap community data. Listings, phone numbers, addresses, and operating status may be missing or outdated. Always verify critical details.
-- Location access is optional. The app uses the browser's location permission and stores preferences/results locally in the browser. It does not have a server that receives the user's location.
-- Public map/search services can be rate-limited or temporarily unavailable. Nearby tries a second Overpass instance if the primary instance fails, uses bounded request timeouts, and only reuses cached results when the cached location is within 1 km of the selected location. This improves resilience but cannot guarantee third-party service uptime.
+- In India, use the official emergency number **112** for urgent assistance. If a call cannot connect, use another official local channel.
+- Nearby listings depend on third-party and community-maintained place data. Names, locations, phone numbers, addresses and operating status may be missing or outdated. Always verify critical details.
+- Location access is optional. The browser obtains location permission and sends the selected coordinates to the app's server-side nearby-search route to retrieve local places. Saved contacts, saved places, theme and result cache are stored in the browser's local storage.
+- Geoapify free-plan quotas and provider availability apply. If the provider is unavailable or the quota is exceeded, the app may show an error or location-matched cached results.
+- Map and place listings are informational only and must not be treated as official emergency dispatch information.
 
 ## External data attribution
 
-Map and place data are provided by OpenStreetMap contributors. Manual geocoding tries the public Nominatim service and then Photon. Nearby place queries use the public Overpass API instances. Review each provider's usage policy before any high-volume or production use; public services are best-effort and are not emergency dispatch infrastructure.
-
-## GitHub Pages deployment
-
-1. Create a GitHub repository for the project.
-2. Upload `index.html`, `style.css`, `script.js`, and `README.md` to the repository root.
-3. Open **Settings → Pages** in the repository.
-4. Under build and deployment, select **Deploy from a branch**.
-5. Select the `main` branch and `/ (root)`, then save.
-6. Open the published URL on an HTTPS connection and test location permission, manual search, filters, saved places, contacts, map and mobile layout.
+The embedded map and map links use OpenStreetMap. Nearby place search is powered by Geoapify Places API, which includes OpenStreetMap-derived and other provider data. Manual location search uses public Nominatim with Photon as a fallback. Follow each provider's current terms, attribution requirements and usage limits.
 
 ## Suggested viva topics
 
 Be ready to explain:
 - `navigator.geolocation.getCurrentPosition()`
-- `fetch()` and JSON parsing
+- `fetch()`, HTTP requests and JSON parsing
 - DOM selection, creation and event listeners
 - Arrays, objects, `filter()`, `map()` and `sort()`
 - Haversine distance calculation
 - Form validation and regular expressions
 - `localStorage` and JSON serialization
-- Error handling with `try/catch/finally`
+- Error handling with `try/catch/finally` and request timeouts
 - Responsive CSS Grid/Flexbox and media queries
-- Limitations of public map data and browser-based SOS links
+- Serverless API routes and environment variables
+- API quotas, third-party data limitations and emergency-safety disclaimers
