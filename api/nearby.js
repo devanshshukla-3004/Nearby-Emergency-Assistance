@@ -1,51 +1,70 @@
-// Nearby services API using one Photon reverse request per selected location.
-// A single multi-tag request avoids bursts of six simultaneous requests to the
-// public Photon instance, which may be throttled when users change locations.
+// Nearby emergency services API.
+// Query each OSM category independently: Photon reverse filters are applied
+// per request, then the results are merged and deduplicated.
 const PHOTON_ENDPOINT = "https://photon.komoot.io/reverse";
 
 const CATEGORIES = [
-  "amenity:hospital",
-  "amenity:police",
-  "amenity:fire_station",
-  "amenity:pharmacy",
-  "amenity:clinic",
-  "emergency:ambulance_station"
+  { id: "hospital", tag: "amenity:hospital" },
+  { id: "police", tag: "amenity:police" },
+  { id: "fire_station", tag: "amenity:fire_station" },
+  { id: "pharmacy", tag: "amenity:pharmacy" },
+  { id: "clinic", tag: "amenity:clinic" },
+  { id: "ambulance_station", tag: "emergency:ambulance_station" }
 ];
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function fetchPhoton(url) {
-  let lastError;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 9000);
-    try {
-      const response = await fetch(url, {
-        method: "GET",
-        headers: { Accept: "application/geo+json" },
-        signal: controller.signal
-      });
+async function fetchCategory(lat, lon, category) {
+  const params = new URLSearchParams({
+    lat: String(lat),
+    lon: String(lon),
+    radius: "5",
+    limit: "50",
+    lang: "en",
+    osm_tag: category.tag
+  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
 
-      if (response.status === 429 || response.status >= 500) {
-        throw new Error(`Photon temporarily returned HTTP ${response.status}`);
-      }
-      if (!response.ok) {
-        throw new Error(`Photon returned HTTP ${response.status}`);
-      }
+  try {
+    const response = await fetch(`${PHOTON_ENDPOINT}?${params.toString()}`, {
+      headers: { Accept: "application/geo+json" },
+      signal: controller.signal
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-      const data = await response.json();
-      if (!data || !Array.isArray(data.features)) {
-        throw new Error("Photon returned an invalid GeoJSON response");
-      }
-      return data;
-    } catch (error) {
-      lastError = error;
-      if (attempt === 0) await sleep(700);
-    } finally {
-      clearTimeout(timer);
+    const data = await response.json();
+    if (!data || !Array.isArray(data.features)) {
+      throw new Error("Invalid GeoJSON response");
     }
+
+    return data.features.map((feature, index) => {
+      const props = feature.properties || {};
+      const [longitude, latitude] = feature.geometry?.coordinates || [];
+      const tags = {
+        ...(props.extra || {}),
+        name: props.name || props.street || props.district || "Unnamed emergency service",
+        [category.tag.split(":")[0]]: category.tag.split(":")[1]
+      };
+
+      if (props.osm_key && props.osm_value) tags[props.osm_key] = props.osm_value;
+      if (props.housenumber) tags["addr:housenumber"] = props.housenumber;
+      if (props.street) tags["addr:street"] = props.street;
+      if (props.district) tags["addr:suburb"] = props.district;
+      if (props.city) tags["addr:city"] = props.city;
+      if (props.phone) tags.phone = props.phone;
+
+      return {
+        type: props.osm_type === "W" ? "way" : props.osm_type === "R" ? "relation" : "node",
+        id: props.osm_id || `photon-${category.id}-${index}-${latitude}-${longitude}`,
+        lat: Number(latitude),
+        lon: Number(longitude),
+        tags
+      };
+    }).filter((item) => Number.isFinite(item.lat) && Number.isFinite(item.lon));
+  } finally {
+    clearTimeout(timer);
   }
-  throw lastError || new Error("Photon request failed");
 }
 
 module.exports = async function handler(req, res) {
@@ -63,56 +82,45 @@ module.exports = async function handler(req, res) {
     return res.status(400).json({ error: "A valid latitude and longitude are required." });
   }
 
-  const params = new URLSearchParams({
-    lat: String(lat),
-    lon: String(lon),
-    radius: "5",
-    limit: "50",
-    lang: "en"
-  });
-  for (const category of CATEGORIES) params.append("osm_tag", category);
+  const combined = [];
+  const categoryCounts = {};
+  const categoryErrors = {};
 
-  try {
-    const data = await fetchPhoton(`${PHOTON_ENDPOINT}?${params.toString()}`);
-    const elements = data.features.map((feature, index) => {
-      const props = feature.properties || {};
-      const [longitude, latitude] = feature.geometry?.coordinates || [];
-      const tags = {
-        ...(props.extra || {}),
-        name: props.name || props.street || props.district || "Unnamed emergency service"
-      };
+  // Sequential requests avoid triggering the public instance's burst limiter.
+  for (const category of CATEGORIES) {
+    try {
+      const features = await fetchCategory(lat, lon, category);
+      categoryCounts[category.id] = features.length;
+      combined.push(...features);
+    } catch (error) {
+      categoryCounts[category.id] = 0;
+      categoryErrors[category.id] = error?.name === "AbortError"
+        ? "timeout"
+        : String(error?.message || error);
+    }
+    await wait(250);
+  }
 
-      if (props.osm_key && props.osm_value) tags[props.osm_key] = props.osm_value;
-      if (props.housenumber) tags["addr:housenumber"] = props.housenumber;
-      if (props.street) tags["addr:street"] = props.street;
-      if (props.district) tags["addr:suburb"] = props.district;
-      if (props.city) tags["addr:city"] = props.city;
-      if (props.phone) tags.phone = props.phone;
+  const unique = new Map();
+  for (const item of combined) {
+    const key = `${item.type}-${item.id}`;
+    if (!unique.has(key)) unique.set(key, item);
+  }
 
-      return {
-        type: props.osm_type === "W" ? "way" : props.osm_type === "R" ? "relation" : "node",
-        id: props.osm_id || `photon-${index}-${latitude}-${longitude}`,
-        lat: Number(latitude),
-        lon: Number(longitude),
-        tags
-      };
-    }).filter((item) => Number.isFinite(item.lat) && Number.isFinite(item.lon));
-
-    return res.status(200).json({
-      elements,
-      source: "OpenStreetMap via Photon",
-      categoriesRequested: CATEGORIES.length
-    });
-  } catch (error) {
-    console.error("Photon nearby lookup failed", {
-      lat,
-      lon,
-      error: String(error?.message || error)
-    });
+  const elements = Array.from(unique.values());
+  if (!elements.length) {
+    console.error("All category lookups failed or returned no features", { lat, lon, categoryErrors });
     return res.status(503).json({
-      error: error?.name === "AbortError"
-        ? "The map data provider timed out. Please retry shortly."
-        : "The map data provider is temporarily busy. Please wait a moment before searching another location."
+      error: "No emergency service categories could be loaded. Please retry shortly.",
+      categoryCounts,
+      categoryErrors
     });
   }
+
+  return res.status(200).json({
+    elements,
+    source: "OpenStreetMap via Photon",
+    categoryCounts,
+    partial: Object.keys(categoryErrors).length > 0
+  });
 };
