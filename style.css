@@ -204,3 +204,12 @@ body.dark .contact-form input, body.dark .manual-form input { background:#101b2b
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; }
 }
+
+/* Reliability and accessibility refinements */
+.status-message.error { background: #fff0ed; color: #a63d30; border: 1px solid #f2c7bf; }
+button:disabled { opacity: .58; cursor: not-allowed; transform: none !important; }
+button:focus-visible, a:focus-visible, input:focus-visible, summary:focus-visible {
+  outline: 3px solid rgba(233, 106, 85, .45);
+  outline-offset: 2px;
+}
+body.dark .status-message.error { background: #382522; color: #ffc0b5; border-color: #70433b; }
