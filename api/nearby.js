@@ -1,11 +1,16 @@
-// Nearby emergency services API.
-// Server-side Overpass fallback avoids the public Photon reverse endpoint,
-// which currently responds HTTP 503 for every category in this deployment.
+// Nearby emergency services API using distinct, public OpenStreetMap Overpass instances.
+// Requests are sequential and identify this application to respect provider policies.
 const OVERPASS_ENDPOINTS = [
-  "https://overpass-api.de/api/interpreter",
-  "https://overpass.private.coffee/api/interpreter",
-  "https://overpass.kumi.systems/api/interpreter"
+  "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+  "https://overpass.private.coffee/api/interpreter"
 ];
+
+const APP_HEADERS = {
+  "Content-Type": "text/plain; charset=utf-8",
+  Accept: "application/json",
+  "User-Agent": "NearbyEmergencyAssistance/1.0 (+https://nearby-emergency-assistance.vercel.app; contact: devanshshukla3004@gmail.com)",
+  Referer: "https://nearby-emergency-assistance.vercel.app/"
+};
 
 function buildQuery(lat, lon) {
   return `[out:json][timeout:20];(
@@ -20,11 +25,8 @@ async function queryOverpass(endpoint, query) {
   try {
     const response = await fetch(endpoint, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-        Accept: "application/json"
-      },
-      body: new URLSearchParams({ data: query }).toString(),
+      headers: APP_HEADERS,
+      body: query,
       signal: controller.signal
     });
     if (!response.ok) throw new Error(`Overpass HTTP ${response.status}`);
@@ -53,36 +55,37 @@ module.exports = async function handler(req, res) {
   }
 
   const query = buildQuery(lat, lon);
-  const attempts = OVERPASS_ENDPOINTS.map((endpoint) => queryOverpass(endpoint, query));
-  try {
-    // First healthy mirror wins; the remaining requests are aborted by the
-    // platform when the handler completes, avoiding serial mirror delays.
-    const elements = await Promise.any(attempts);
-    const categoryCounts = {
-      hospital: 0, police: 0, fire_station: 0,
-      pharmacy: 0, clinic: 0, ambulance_station: 0
-    };
-    for (const item of elements) {
-      const tags = item.tags || {};
-      if (tags.amenity === "hospital") categoryCounts.hospital++;
-      else if (tags.amenity === "police") categoryCounts.police++;
-      else if (tags.amenity === "fire_station") categoryCounts.fire_station++;
-      else if (tags.amenity === "pharmacy") categoryCounts.pharmacy++;
-      else if (tags.amenity === "clinic") categoryCounts.clinic++;
-      else if (tags.emergency === "ambulance_station") categoryCounts.ambulance_station++;
+  const errors = [];
+  // Do not fan out requests: public Overpass operators ask clients to query one
+  // instance at a time. The second endpoint is a genuine independent fallback.
+  for (const endpoint of OVERPASS_ENDPOINTS) {
+    try {
+      const elements = await queryOverpass(endpoint, query);
+      const categoryCounts = {
+        hospital: 0, police: 0, fire_station: 0,
+        pharmacy: 0, clinic: 0, ambulance_station: 0
+      };
+      for (const item of elements) {
+        const tags = item.tags || {};
+        if (tags.amenity === "hospital") categoryCounts.hospital++;
+        else if (tags.amenity === "police") categoryCounts.police++;
+        else if (tags.amenity === "fire_station") categoryCounts.fire_station++;
+        else if (tags.amenity === "pharmacy") categoryCounts.pharmacy++;
+        else if (tags.amenity === "clinic") categoryCounts.clinic++;
+        else if (tags.emergency === "ambulance_station") categoryCounts.ambulance_station++;
+      }
+      return res.status(200).json({
+        elements,
+        source: "OpenStreetMap via Overpass",
+        categoryCounts
+      });
+    } catch (error) {
+      errors.push(String(error?.message || error));
     }
-    return res.status(200).json({
-      elements,
-      source: "OpenStreetMap via Overpass",
-      categoryCounts
-    });
-  } catch (error) {
-    console.error("All Overpass mirrors failed", {
-      lat, lon,
-      errors: (error?.errors || []).map((item) => String(item?.message || item))
-    });
-    return res.status(503).json({
-      error: "OpenStreetMap search services are temporarily unavailable. Please retry shortly."
-    });
   }
+
+  console.error("All Overpass endpoints failed", { lat, lon, errors });
+  return res.status(503).json({
+    error: "OpenStreetMap search services are temporarily unavailable. Please retry shortly."
+  });
 };
