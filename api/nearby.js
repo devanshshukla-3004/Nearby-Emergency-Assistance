@@ -8,7 +8,8 @@ const CATEGORIES = [
   "healthcare.pharmacy",
   "healthcare.clinic_or_praxis",
   "service.police",
-  "service.fire_station"
+  "service.fire_station",
+  "emergency.ambulance_station"
 ];
 
 function classifyPlace(properties = {}) {
@@ -19,6 +20,7 @@ function classifyPlace(properties = {}) {
     ...categories
   ].filter(Boolean).map(value => String(value).toLowerCase());
 
+  if (values.some(value => value === "emergency.ambulance_station" || value === "service.ambulance_station" || value === "ambulance_station")) return "ambulance_station";
   if (values.some(value => value === "service.police" || value === "police" || value.includes(".police"))) return "police";
   if (values.some(value => value === "service.fire_station" || value === "fire_station" || value.includes("fire_station"))) return "fire_station";
   if (values.some(value => value === "healthcare.pharmacy" || value === "pharmacy" || value.endsWith(".pharmacy"))) return "pharmacy";
@@ -52,11 +54,12 @@ function normalizeFeature(feature, index) {
     lon,
     tags: {
       name,
-      amenity: category === "fire_station" ? "fire_station" :
+      amenity: category === "ambulance_station" ? "" :
+        category === "fire_station" ? "fire_station" :
         category === "hospital" ? "hospital" :
         category === "pharmacy" ? "pharmacy" :
         category === "police" ? "police" : "clinic",
-      emergency: "",
+      emergency: category === "ambulance_station" ? "ambulance_station" : "",
       phone: String(phone || ""),
       "addr:full": String(address)
     }
@@ -132,6 +135,7 @@ module.exports = async function handler(req, res) {
       else if (category === "fire_station") categoryCounts.fire_station++;
       else if (category === "pharmacy") categoryCounts.pharmacy++;
       else if (category === "clinic") categoryCounts.clinic++;
+      else if (item.tags.emergency === "ambulance_station") categoryCounts.ambulance_station++;
     }
     return res.status(200).json({
       elements,
