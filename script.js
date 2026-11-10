@@ -312,7 +312,7 @@ function normalizePlace(element) {
     id: `${element.type}-${element.id}`,
     name: String(tags.name),
     category,
-    address: addressParts.join(", ") || "Address not listed on OpenStreetMap",
+    address: tags["addr:full"] || addressParts.join(", ") || "Address not listed",
     phone: tags.phone || tags["contact:phone"] || "",
     lat: Number(lat),
     lon: Number(lon)
