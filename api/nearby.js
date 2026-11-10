@@ -24,7 +24,7 @@ async function fetchCategory(lat, lon, category) {
     osm_tag: category.tag
   });
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 8000);
+  const timer = setTimeout(() => controller.abort(), 3500);
 
   try {
     const response = await fetch(`${PHOTON_ENDPOINT}?${params.toString()}`, {
@@ -86,19 +86,27 @@ module.exports = async function handler(req, res) {
   const categoryCounts = {};
   const categoryErrors = {};
 
-  // Sequential requests avoid triggering the public instance's burst limiter.
-  for (const category of CATEGORIES) {
-    try {
-      const features = await fetchCategory(lat, lon, category);
-      categoryCounts[category.id] = features.length;
-      combined.push(...features);
-    } catch (error) {
-      categoryCounts[category.id] = 0;
-      categoryErrors[category.id] = error?.name === "AbortError"
-        ? "timeout"
-        : String(error?.message || error);
-    }
-    await wait(250);
+  // Use small concurrent batches to finish within serverless limits
+  // without firing all public Photon requests at once.
+  for (let start = 0; start < CATEGORIES.length; start += 3) {
+    const batch = CATEGORIES.slice(start, start + 3);
+    const results = await Promise.allSettled(
+      batch.map((category) => fetchCategory(lat, lon, category))
+    );
+    results.forEach((result, index) => {
+      const category = batch[index];
+      if (result.status === "fulfilled") {
+        categoryCounts[category.id] = result.value.length;
+        combined.push(...result.value);
+      } else {
+        categoryCounts[category.id] = 0;
+        const error = result.reason;
+        categoryErrors[category.id] = error?.name === "AbortError"
+          ? "timeout"
+          : String(error?.message || error);
+      }
+    });
+    if (start + 3 < CATEGORIES.length) await wait(150);
   }
 
   const unique = new Map();
