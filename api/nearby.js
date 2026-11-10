@@ -1,5 +1,5 @@
-// Nearby places API: use Photon reverse search with OSM category filters.
-// This avoids expensive, broad Overpass interpreter queries for every page visit.
+// Nearby places API using Photon reverse search.
+// Photon /reverse supports radius (km), limit and OSM-tag filtering.
 const PHOTON_ENDPOINT = "https://photon.komoot.io/reverse";
 
 const CATEGORIES = [
@@ -12,29 +12,40 @@ const CATEGORIES = [
 ];
 
 async function searchCategory(lat, lon, category) {
-  const params = new URLSearchParams({
-    lat: String(lat),
-    lon: String(lon),
-    radius: "5",
-    limit: "20",
-    osm_tag: `${category.key}:${category.value}`
-  });
+  const params = new URLSearchParams();
+  params.set("lat", String(lat));
+  params.set("lon", String(lon));
+  params.set("radius", "5"); // Photon radius is in kilometres.
+  params.set("limit", "20");
+  params.set("lang", "en");
+  params.append("osm_tag", `${category.key}:${category.value}`);
+
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5000);
+  const timeout = setTimeout(() => controller.abort(), 8000);
   try {
     const response = await fetch(`${PHOTON_ENDPOINT}?${params.toString()}`, {
-      headers: { Accept: "application/geo+json, application/json" },
+      method: "GET",
+      headers: {
+        Accept: "application/geo+json",
+        "User-Agent": "NearbyEmergencyAssistance/1.0 (CSE326 student project)"
+      },
       signal: controller.signal
     });
     if (!response.ok) throw new Error(`Photon HTTP ${response.status}`);
     const data = await response.json();
-    if (!Array.isArray(data.features)) throw new Error("Photon returned an invalid GeoJSON response");
+    if (!Array.isArray(data.features)) {
+      throw new Error(data.message || "Photon returned an invalid GeoJSON response");
+    }
+
     return data.features.map((feature) => {
       const props = feature.properties || {};
       const coordinates = feature.geometry?.coordinates || [];
-      const [lonValue, latValue] = coordinates;
-      const tags = { name: props.name || props.street || "", ...props.extra };
-      tags[category.key] = category.value;
+      const [longitude, latitude] = coordinates;
+      const tags = {
+        ...(props.extra || {}),
+        name: props.name || props.street || props.district || `${category.value.replace("_", " ")} (unnamed)`
+      };
+      tags[props.osm_key || category.key] = props.osm_value || category.value;
       if (props.housenumber) tags["addr:housenumber"] = props.housenumber;
       if (props.street) tags["addr:street"] = props.street;
       if (props.district) tags["addr:suburb"] = props.district;
@@ -42,9 +53,9 @@ async function searchCategory(lat, lon, category) {
       if (props.phone) tags.phone = props.phone;
       return {
         type: props.osm_type === "W" ? "way" : props.osm_type === "R" ? "relation" : "node",
-        id: props.osm_id || `${category.value}-${latValue}-${lonValue}`,
-        lat: Number(latValue),
-        lon: Number(lonValue),
+        id: props.osm_id || `${category.value}-${latitude}-${longitude}`,
+        lat: Number(latitude),
+        lon: Number(longitude),
         tags
       };
     }).filter((item) => Number.isFinite(item.lat) && Number.isFinite(item.lon));
@@ -68,20 +79,29 @@ module.exports = async function handler(req, res) {
     return res.status(400).json({ error: "A valid latitude and longitude are required." });
   }
 
-  const results = await Promise.allSettled(
+  const settled = await Promise.allSettled(
     CATEGORIES.map((category) => searchCategory(lat, lon, category))
   );
-  const successful = results.filter((result) => result.status === "fulfilled");
-  if (!successful.length) {
-    console.error("All Photon category lookups failed", results.map((result) =>
-      result.status === "rejected" ? String(result.reason?.message || result.reason) : "ok"
-    ));
+  const elements = [];
+  const failedCategories = [];
+  settled.forEach((result, index) => {
+    if (result.status === "fulfilled") elements.push(...result.value);
+    else {
+      failedCategories.push(CATEGORIES[index].value);
+      console.error("Photon category lookup failed", {
+        category: CATEGORIES[index].value,
+        error: String(result.reason?.message || result.reason)
+      });
+    }
+  });
+
+  if (settled.every((result) => result.status === "rejected")) {
     return res.status(503).json({
-      error: "The OpenStreetMap places search is temporarily unavailable. Please retry shortly."
+      error: "The nearby places provider did not respond. This may be a temporary provider or network issue. Please retry shortly.",
+      failedCategories
     });
   }
 
-  const elements = successful.flatMap((result) => result.value);
   const unique = new Map();
   for (const item of elements) {
     const key = `${item.type}-${item.id}`;
@@ -91,7 +111,8 @@ module.exports = async function handler(req, res) {
   return res.status(200).json({
     elements: Array.from(unique.values()),
     source: "OpenStreetMap via Photon",
-    categoriesAvailable: successful.length,
-    categoriesRequested: CATEGORIES.length
+    categoriesAvailable: CATEGORIES.length - failedCategories.length,
+    categoriesRequested: CATEGORIES.length,
+    failedCategories
   });
 };
