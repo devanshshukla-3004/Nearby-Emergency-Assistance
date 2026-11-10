@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#101b2b">
+  <meta name="description" content="Nearby helps you locate emergency services and share your location quickly.">
+  <title>Nearby — Emergency Assistance</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <a class="brand" href="#" aria-label="Nearby home">
+      <span class="brand-symbol" aria-hidden="true">N</span>
+      <span><strong>nearby</strong><small>EMERGENCY ASSISTANCE</small></span>
+    </a>
+    <div class="header-actions">
+      <span class="location-pill"><span class="pulse-dot"></span><span id="locationLabel">Location not set</span></span>
+      <button class="icon-button" id="themeToggle" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">◐</button>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">HELP IS CLOSER THAN YOU THINK</p>
+        <h1>When every second<br><em>matters.</em></h1>
+        <p class="hero-description">Find nearby emergency services, get directions, and share your location with the people you trust.</p>
+        <div class="hero-actions">
+          <button class="button button-primary" id="locateBtn" type="button"><span aria-hidden="true">◎</span> Find help near me</button>
+          <a class="button button-quiet" href="#nearby">Explore services <span aria-hidden="true">↘</span></a>
+        </div>
+        <p class="privacy-note"><span aria-hidden="true">⌖</span> Your location is used in this browser to find nearby services.</p>
+      </div>
+      <aside class="sos-card" aria-labelledby="sosHeading">
+        <div class="sos-topline"><span class="sos-indicator"></span> EMERGENCY ACCESS</div>
+        <h2 id="sosHeading">Need urgent help?</h2>
+        <p>Call the emergency number or prepare a message with your current location.</p>
+        <a class="sos-button" href="tel:112" id="callEmergency"><span class="sos-icon" aria-hidden="true">!</span><span><strong>Call 112</strong><small>India emergency response</small></span><span class="sos-arrow" aria-hidden="true">↗</span></a>
+        <button class="share-button" id="prepareAlertBtn" type="button">Prepare location alert <span aria-hidden="true">→</span></button>
+        <p class="sos-disclaimer">Nearby does not dispatch emergency services. Call 112 directly in an emergency.</p>
+      </aside>
+    </section>
+
+    <section class="alert-panel" id="alertPanel" hidden aria-live="polite">
+      <div class="alert-panel-icon" aria-hidden="true">↗</div>
+      <div class="alert-panel-content">
+        <strong>Your location message is ready</strong>
+        <p id="alertMessage">Allow location access to prepare a message.</p>
+        <div class="inline-actions">
+          <a class="button button-small button-primary" id="whatsappShare" href="#" target="_blank" rel="noopener">Share on WhatsApp</a>
+          <a class="button button-small button-outline" id="smsShare" href="#">Open SMS</a>
+        </div>
+      </div>
+      <button class="close-button" id="closeAlert" type="button" aria-label="Close alert">×</button>
+    </section>
+
+    <section class="quick-stats" aria-label="Application features">
+      <div><span class="stat-icon">⌖</span><span><strong id="resultCount">—</strong><small>Places found</small></span></div>
+      <div><span class="stat-icon">◷</span><span><strong>5 km</strong><small>Search radius</small></span></div>
+      <div><span class="stat-icon">♡</span><span><strong id="savedCount">0</strong><small>Saved places</small></span></div>
+      <div><span class="stat-icon">⌘</span><span><strong>24 / 7</strong><small>Quick access</small></span></div>
+    </section>
+
+    <section class="content-grid" id="nearby">
+      <div class="services-column">
+        <div class="section-heading">
+          <div><p class="eyebrow">LOCAL SUPPORT</p><h2>Emergency services <span class="heading-dot">.</span></h2></div>
+          <button class="text-button" id="refreshBtn" type="button">↻ Refresh</button>
+        </div>
+        <div class="search-row">
+          <label class="search-box"><span aria-hidden="true">⌕</span><input id="searchInput" type="search" placeholder="Search by service or name" autocomplete="off"></label>
+          <button class="button button-outline filter-toggle" id="manualLocationBtn" type="button">Set location</button>
+        </div>
+        <div class="filter-list" id="filterList" role="group" aria-label="Filter emergency services">
+          <button class="filter-chip active" type="button" data-filter="all">All services</button>
+          <button class="filter-chip" type="button" data-filter="hospital">Hospitals</button>
+          <button class="filter-chip" type="button" data-filter="police">Police</button>
+          <button class="filter-chip" type="button" data-filter="fire">Fire stations</button>
+          <button class="filter-chip" type="button" data-filter="pharmacy">Pharmacies</button>
+          <button class="filter-chip" type="button" data-filter="ambulance">Ambulance</button>
+        </div>
+        <div class="status-message" id="statusMessage" role="status">Use “Find help near me” to discover services around your current location.</div>
+        <ul class="service-list" id="serviceList" aria-live="polite"></ul>
+      </div>
+
+      <aside class="map-column">
+        <div class="map-heading"><div><p class="eyebrow">YOUR AREA</p><h2>Location map</h2></div><span class="map-live"><i></i> MAP</span></div>
+        <div class="map-frame" id="mapFrame">
+          <div class="map-placeholder"><span class="map-placeholder-icon">⌖</span><strong>Your map will appear here</strong><p>Allow location access or search for a city to view nearby services.</p></div>
+        </div>
+        <p class="map-caption">Map data © OpenStreetMap contributors. Locations may be incomplete or outdated.</p>
+        <div class="saved-box">
+          <div class="saved-heading"><strong>Saved places</strong><span id="savedCountSmall">0 saved</span></div>
+          <ul id="savedList" class="saved-list"><li class="saved-empty">Save a useful place to find it quickly later.</li></ul>
+        </div>
+      </aside>
+    </section>
+
+    <section class="bottom-grid">
+      <article class="info-card">
+        <div class="info-card-icon">✚</div>
+        <div><p class="eyebrow">BE PREPARED</p><h3>Emergency contacts</h3><p>Keep trusted contacts ready. Your saved contacts stay on this device.</p>
+          <form id="contactForm" class="contact-form">
+            <label><span class="sr-only">Contact name</span><input id="contactName" type="text" placeholder="Contact name" maxlength="40" required></label>
+            <label><span class="sr-only">Phone number</span><input id="contactPhone" type="tel" placeholder="Phone number" maxlength="18" required></label>
+            <button class="button button-primary button-small" type="submit">Add contact</button>
+          </form>
+          <ul id="contactList" class="contact-list"><li class="saved-empty">No personal contacts added yet.</li></ul>
+        </div>
+      </article>
+      <article class="info-card guidance-card">
+        <div class="info-card-icon">✳</div>
+        <div><p class="eyebrow">STAY CALM</p><h3>Emergency guidance</h3><p>Simple reminders to help you take the next safe step.</p>
+          <div class="guidance-list">
+            <details><summary>Medical emergency</summary><p>Call emergency services. Follow the dispatcher's instructions. Do not move an injured person unless they are in immediate danger.</p></details>
+            <details><summary>Fire or smoke</summary><p>Move away from danger, use stairs rather than lifts, and call emergency services from a safe location.</p></details>
+            <details><summary>Personal safety</summary><p>Move to a public, well-lit place if possible. Contact emergency services and someone you trust.</p></details>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <section class="manual-panel" id="manualPanel" hidden>
+      <div><p class="eyebrow">SEARCH ANOTHER AREA</p><h2>Set a location</h2><p>Enter a city, area or landmark to search around it.</p></div>
+      <form id="manualForm" class="manual-form">
+        <label for="manualInput">City or area</label>
+        <input id="manualInput" type="text" placeholder="e.g. Ludhiana, Punjab" maxlength="100" required>
+        <button class="button button-primary" type="submit">Search location</button>
+      </form>
+      <button class="close-button manual-close" id="closeManual" type="button" aria-label="Close location search">×</button>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <a class="brand footer-brand" href="#"><span class="brand-symbol">N</span><span><strong>nearby</strong><small>EMERGENCY ASSISTANCE</small></span></a>
+    <p>Designed to help you find nearby support. In an emergency, contact official emergency services directly.</p>
+    <span>© 2026 Nearby · CSE326 Project</span>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
