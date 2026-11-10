@@ -33,7 +33,7 @@ The API key must remain a server-side environment variable. Do not place it in `
 ## Features
 
 - Current location detection with manual location search fallback (Nominatim, then Photon)
-- Nearby hospitals, clinics, pharmacies, police stations and fire stations through Geoapify Places API
+- Nearby hospitals, clinics, pharmacies, police stations, fire stations and ambulance stations through Geoapify Places API
 - 5 km search radius, distance sorting and up to 200 results
 - Scrollable results panel so a large result set does not extend the full page
 - Category filters and text search
