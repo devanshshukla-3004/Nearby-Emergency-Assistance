@@ -218,18 +218,22 @@ async function loadNearbyPlaces() {
     for (const endpoint of CONFIG.overpassEndpoints) {
       if (controller.signal.aborted || requestId !== state.requestId) return;
       try {
-        const timeout = window.setTimeout(() => controller.abort(), 25000);
+        const endpointController = new AbortController();
+        const abortEndpoint = () => endpointController.abort();
+        controller.signal.addEventListener("abort", abortEndpoint, { once: true });
+        const timeout = window.setTimeout(() => endpointController.abort(), 25000);
         let response;
         try {
           response = await fetch(endpoint, {
             method: "POST",
             headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", "Accept": "application/json" },
             body: `data=${encodeURIComponent(query)}`,
-            signal: controller.signal,
+            signal: endpointController.signal,
             referrerPolicy: "strict-origin-when-cross-origin"
           });
         } finally {
           window.clearTimeout(timeout);
+          controller.signal.removeEventListener("abort", abortEndpoint);
         }
         if (!response.ok) {
           const retryHint = response.status === 429 || response.status === 503
